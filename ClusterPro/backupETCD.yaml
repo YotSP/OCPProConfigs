@@ -1,0 +1,201 @@
+---
+kind: Project
+apiVersion: project.openshift.io/v1
+metadata:
+# Nombre del Namespace
+  name: ns-etcd-backup
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-etcd-backup
+  namespace: ns-etcd-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  storageClassName: ocs-storagecluster-cephfs
+  resources:
+    requests:
+      storage: 10Gi
+---
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: cj-etcd-backup
+  # Nombre del Namespace
+  namespace: ns-etcd-backup
+  labels:
+    app: etcd-backup
+spec:
+  # Programacion del backup, sistema crontab de linux
+  schedule: 0 1 * * *
+  concurrencyPolicy: Forbid
+  suspend: false
+  jobTemplate:
+    metadata:
+      labels:
+        app: etcd-backup
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: etcd-backup
+        spec:
+          restartPolicy: Never
+          activeDeadlineSeconds: 600
+          # Service Account que ejecuta el Pod
+          serviceAccountName: sa-etcd-backup
+          schedulerName: default-scheduler
+          terminationGracePeriodSeconds: 30
+          # Nodo maestro en el que ejecutar el Pod
+          nodeName: master-1
+          securityContext: {}
+          containers:
+            - resources:
+                limits:
+                  cpu: 500m
+                  memory: 64Mi
+                requests:
+                  cpu: 500m
+                  memory: 64Mi
+              terminationMessagePath: /dev/termination-log
+              name: backup
+              command:
+                - /bin/bash
+                - '-c'
+              env:
+                - name: HOST_PATH
+                  value: /host
+                - name: ETCD_BACKUP_RETENTION
+                  value: '7'
+                - name: ETCD_BACKUP_SCRIPT
+                  value: /usr/local/bin/cluster-backup.sh
+                - name: ETCD_BACKUP_PATH
+                  value: /home/core/assets/backup
+                - name: ETCD_BACKUP_PV_PATH
+                  value: /var/lib/etcd-backup
+              securityContext:
+                privileged: true
+                runAsUser: 1000
+              imagePullPolicy: IfNotPresent
+              volumeMounts:
+                - name: volume-host
+                  mountPath: /host
+                - name: volume-backup
+                  mountPath: /var/lib/etcd-backup
+              terminationMessagePolicy: File
+              image: 'registry.redhat.io/openshift4/ose-deployer:latest'
+              args:
+                - >-
+                  oc debug node/master-1 -n ns-etcd-backup -- bash -c "chroot /host
+                  $ETCD_BACKUP_SCRIPT $ETCD_BACKUP_PATH" && gzip
+                  /host$ETCD_BACKUP_PATH/*.db && rsync -rtv
+                  /host$ETCD_BACKUP_PATH/* $ETCD_BACKUP_PV_PATH/ && rm -f
+                  /host$ETCD_BACKUP_PATH/* && echo "contenido de la carpeta" &&
+                  ls -la $ETCD_BACKUP_PV_PATH/* && echo "Realizando limpieza de
+                  backups. Se eliminarán los backups anteriores a
+                  $ETCD_BACKUP_RETENTION" && find $ETCD_BACKUP_PV_PATH/* -type f
+                  -mtime +$ETCD_BACKUP_RETENTION -exec rm -v {} \; && echo
+                  "Limpieza realizada" && ls -la $ETCD_BACKUP_PV_PATH/*
+          serviceAccount: etcd-backup
+          volumes:
+            - name: volume-host
+              hostPath:
+                path: /
+                type: Directory
+            - name: volume-backup
+              persistentVolumeClaim:
+                claimName: pvc-etcd-backup
+          tolerations:
+            - key: node-role.kubernetes.io/master
+              effect: NoSchedule
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: sa-etcd-backup
+  namespace: ns-etcd-backup
+  labels:
+    app: etcd-backup
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: rol-use-privileged-scc
+  namespace: ns-etcd-backup
+rules:
+  - verbs:
+      - use
+    apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - privileged
+      - anyuid
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: rb-etcd-backup-privileged
+  namespace: ns-etcd-backup
+subjects:
+  - kind: ServiceAccount
+    name: sa-etcd-backup
+    namespace: ns-etcd-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rol-use-privileged-scc
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cr-etcd-backup
+rules:
+  - verbs:
+      - list
+      - get
+    apiGroups:
+      - ''
+    resources:
+      - nodes
+  - verbs:
+      - list
+    apiGroups:
+      - metrics.k8s.io
+    resources:
+      - nodes
+  - verbs:
+      - create
+      - list
+      - get
+      - watch
+      - delete
+    apiGroups:
+      - ''
+    resources:
+      - pods
+  - verbs:
+      - get
+    apiGroups:
+      - ''
+    resources:
+      - pods/log
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: crb-etcd-backup
+subjects:
+  - kind: ServiceAccount
+    name: sa-etcd-backup
+    namespace: ns-etcd-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cr-etcd-backup
