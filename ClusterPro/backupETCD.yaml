@@ -99,7 +99,7 @@ spec:
                   $ETCD_BACKUP_RETENTION" && find $ETCD_BACKUP_PV_PATH/* -type f
                   -mtime +$ETCD_BACKUP_RETENTION -exec rm -v {} \; && echo
                   "Limpieza realizada" && ls -la $ETCD_BACKUP_PV_PATH/*
-          serviceAccount: etcd-backup
+          serviceAccount: sa-etcd-backup
           volumes:
             - name: volume-host
               hostPath:
