@@ -1,9 +1,9 @@
 ---
-kind: Project
-apiVersion: project.openshift.io/v1
-metadata:
+#kind: Project
+#apiVersion: project.openshift.io/v1
+#metadata:
 # Nombre del Namespace
-  name: ns-etcd-backup
+#  name: ns-etcd-backup
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
