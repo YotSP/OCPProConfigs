@@ -32,6 +32,7 @@ rules:
       - list
       - get
       - watch
+      - patch
     apiGroups:
       - project.openshift.io
     resources:
